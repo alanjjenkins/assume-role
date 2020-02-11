@@ -194,7 +194,7 @@ func assumeProfile(profile string) (*credentials.Value, error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		Profile:                 profile,
 		SharedConfigState:       session.SharedConfigEnable,
-		AssumeRoleTokenProvider: readTokenCode,
+		AssumeRoleTokenProvider: getTokenCode,
 	}))
 
 	creds, err := sess.Config.Credentials.Get()
@@ -217,7 +217,7 @@ func assumeRole(role, mfa string, duration time.Duration) (*credentials.Value, e
 	}
 	if mfa != "" {
 		params.SerialNumber = aws.String(mfa)
-		token, err := readTokenCode()
+		token, err := getTokenCode()
 		if err != nil {
 			return nil, err
 		}
@@ -244,6 +244,16 @@ type roleConfig struct {
 }
 
 type config map[string]roleConfig
+
+func getTokenCode() (string, error) {
+	if token := os.Getenv("AWS_MFA_TOKEN"); token != "" {
+		return token, nil
+	}
+
+	token, err := readTokenCode()
+
+	return token, err
+}
 
 // readTokenCode reads the MFA token from Stdin.
 func readTokenCode() (string, error) {
