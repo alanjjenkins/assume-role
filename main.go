@@ -2,9 +2,12 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
@@ -56,6 +59,7 @@ func main() {
 	var (
 		duration = flag.Duration("duration", time.Hour, "The duration that the credentials will be valid for.")
 		format   = flag.String("format", defaultFormat(), "Format can be 'bash' or 'powershell'.")
+		console  = flag.Bool("console", false, "Generate a console signin URL using temporary credentials.")
 	)
 	flag.Parse()
 	argv := flag.Args()
@@ -92,6 +96,25 @@ func main() {
 	}
 
 	must(err)
+
+	if *console {
+		signInTokenURL := generateSigninTokenURL(creds)
+		signInToken, err := requestSigninToken(signInTokenURL)
+		consoleURL := generateConsoleURL(signInToken, *duration)
+
+		if err != nil {
+			if _, ok := err.(*exec.ExitError); ok {
+				// Errors are already on Stderr.
+				os.Exit(1)
+			}
+
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("%s\n", consoleURL)
+		return
+	}
 
 	if len(args) == 0 {
 		switch *format {
@@ -254,4 +277,67 @@ func must(err error) {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+type getSigninTokenRequestParams struct {
+	SessionID    string `json:"sessionId"`
+	SessionKey   string `json:"sessionKey"`
+	SessionToken string `json:"sessionToken"`
+}
+
+func generateSigninTokenURL(credentials *credentials.Value) string {
+	reqParamsStruct := getSigninTokenRequestParams{
+		SessionID:    credentials.AccessKeyID,
+		SessionKey:   credentials.SecretAccessKey,
+		SessionToken: credentials.SessionToken,
+	}
+
+	requestParamsString, err := json.Marshal(reqParamsStruct)
+
+	if err != nil {
+		if _, ok := err.(*exec.ExitError); ok {
+			// Errors are already on Stderr.
+			os.Exit(1)
+		}
+
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	escapedRequestString := url.QueryEscape(string(requestParamsString))
+	url := "https://signin.aws.amazon.com/federation?Action=getSigninToken&Session=" + escapedRequestString
+
+	return url
+}
+
+type requestSigninTokenResponse struct {
+	SignInToken string `json:"SigninToken"`
+}
+
+func requestSigninToken(signinTokenURL string) (string, error) {
+	var signinTokenResp requestSigninTokenResponse
+	resp, err := http.Get(signinTokenURL)
+	if err != nil {
+		return "", err
+	}
+
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+
+	if err != nil {
+		return "", err
+	}
+
+	if err := json.Unmarshal(body, &signinTokenResp); err != nil {
+		return "", err
+	}
+
+	return signinTokenResp.SignInToken, nil
+}
+
+func generateConsoleURL(signinToken string, duration time.Duration) string {
+	consoleURL := "https://signin.aws.amazon.com/federation?Action=login&Issuer=&SigninToken=" + signinToken + "&SessionDuration=" + string(duration/time.Second)
+	region := os.Getenv("AWS_DEFAULT_REGION")
+	consoleURL = consoleURL + "&Destination=" + url.QueryEscape("https://"+region+".console.aws.amazon.com/")
+	return consoleURL
 }
