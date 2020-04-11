@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -215,6 +216,7 @@ func assumeRole(role, mfa string, duration time.Duration) (*credentials.Value, e
 		RoleSessionName: aws.String("cli"),
 		DurationSeconds: aws.Int64(int64(duration / time.Second)),
 	}
+
 	if mfa != "" {
 		params.SerialNumber = aws.String(mfa)
 		token, err := getTokenCode()
@@ -250,9 +252,55 @@ func getTokenCode() (string, error) {
 		return token, nil
 	}
 
+	if zenity := os.Getenv("AWS_MFA_ZENITY"); zenity == "true" {
+		token, err := readTokenCodeZenity()
+		if err != nil {
+			log.Fatal("Unable to get MFA token code using Zenity:", err)
+		}
+		return token, nil
+	}
+
 	token, err := readTokenCode()
 
 	return token, err
+}
+
+// readTokenCodeZenity read the MFA code using a Zenity GUI entry dialogue
+func readTokenCodeZenity() (token string, err error) {
+	zenityPath, err := exec.LookPath("zenity")
+	if err != nil {
+		log.Fatal("Unable to find zenity in PATH. Is it installed?")
+	}
+
+	cmd := exec.Cmd{
+		Path: zenityPath,
+		Args: []string{zenityPath, "--entry", "--text=MFA Code"},
+	}
+
+	log.Print(cmd.String())
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		log.Fatal("Unable to get stdout pipe for Zenity:", err)
+	}
+
+	err = cmd.Start()
+	if err != nil {
+		log.Fatal("Zenity failed:", err)
+	}
+
+	stdoutContents := make([]byte, 7)
+	if _, err = stdout.Read(stdoutContents); err != nil {
+		log.Fatal("Unable to read stdout pipe for Zenity:", err)
+	}
+
+	if err := cmd.Wait(); err != nil {
+		log.Fatal(err)
+	}
+
+	token = strings.TrimSpace(string(stdoutContents))
+
+	return token, nil
 }
 
 // readTokenCode reads the MFA token from Stdin.
