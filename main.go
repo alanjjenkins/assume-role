@@ -399,3 +399,12 @@ func generateConsoleURL(signinToken string, duration time.Duration) string {
 	consoleURL = consoleURL + "&Destination=" + url.QueryEscape("https://"+region+".console.aws.amazon.com/")
 	return consoleURL
 }
+
+type CustomCredentialsProvider stuct{}
+func (m *CustomCredentialsProvider) Retrieve() (Value, error) {
+	// Create session in source profile
+	// Get session token with MFA
+	// Cache Result
+	// Assume role in other accounts
+}
+func (m *CustomCredentialsProvider) IsExpired() bool {}
